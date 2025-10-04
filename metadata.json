@@ -1,0 +1,5 @@
+{
+  "name": "AI Science Teacher",
+  "description": "An interactive web application featuring an AI science teacher for middle-school students. The AI provides engaging lessons, complete with simulated image and video resources, and allows for real-time interruptions and questions.",
+  "requestFramePermissions": []
+}
