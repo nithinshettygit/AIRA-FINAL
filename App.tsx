@@ -1,12 +1,13 @@
-
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { RobotAvatar } from './components/RobotAvatar';
 import { MessageDisplay } from './components/MessageDisplay';
 import { InputBar } from './components/InputBar';
 import { getAiTeacherResponse } from './services/apiService';
+import { ttsService } from './services/ttsService';
+import { useMediaSequencer } from './hooks/useMediaSequencer';
 import type { MediaInfo } from './types';
 import { Message, Role } from './types';
-import { READING_SPEED_MS_PER_CHAR, MEDIA_OVERLAY_DURATION_MS } from './constants';
+import { READING_SPEED_MS_PER_CHAR } from './constants';
 
 export default function App(): React.ReactElement {
   const [messages, setMessages] = useState<Message[]>([]);
@@ -15,13 +16,21 @@ export default function App(): React.ReactElement {
   
   const [floatingText, setFloatingText] = useState<string>('');
   const [isFloating, setIsFloating] = useState<boolean>(false);
-  const [mediaInfo, setMediaInfo] = useState<MediaInfo | null>(null);
 
-  // Fix: Use ReturnType<typeof setInterval> for browser compatibility instead of NodeJS.Timeout
+  // Use media sequencer hook
+  const {
+    currentSegment,
+    currentMedia,
+    currentText,
+    isPlaying: isSequencePlaying,
+    startSequence,
+    stopSequence,
+    advanceManually,
+    closeVideo
+  } = useMediaSequencer();
+
   const textFloatIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  // Fix: Use ReturnType<typeof setTimeout> for browser compatibility instead of NodeJS.Timeout
-  const mediaTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const currentAiResponseRef = useRef<string>('');
+  const originalAiResponseRef = useRef<string>('');
   const floatingTextIndexRef = useRef<number>(0);
   const interruptedTextRef = useRef<string>('');
 
@@ -31,117 +40,124 @@ export default function App(): React.ReactElement {
       textFloatIntervalRef.current = null;
     }
     setIsFloating(false);
+    ttsService.stop();
   }, []);
 
   const handleCloseMedia = useCallback(() => {
-    setMediaInfo(null);
-    if (mediaTimeoutRef.current) {
-      clearTimeout(mediaTimeoutRef.current);
-      mediaTimeoutRef.current = null;
+    console.log('[App] Media closed manually');
+    
+    if (currentMedia?.type === 'video') {
+      // For videos, use special closeVideo function
+      closeVideo();
+    } else {
+      // For images and other media, advance normally
+      advanceManually();
     }
+  }, [currentMedia, advanceManually, closeVideo]);
+
+  const sanitizeForDisplay = useCallback((text: string) => {
+    return text
+      .replace(/\(see: [^)]+\.(png|jpg|jpeg)\)/gi, '')
+      .replace(/\(YouTube: https?:\/\/[^)]+\)/ig, '')
+      .replace(/\s{2,}/g, ' ')
+      .trim();
   }, []);
 
-  const parseAndDisplayMedia = useCallback((text: string) => {
-    const imageRegex = /\(see: (.*?(\.png|\.jpg|\.jpeg))\)/ig;
-    const videoRegex = /\(YouTube: (https:\/\/www\.youtube\.com\/watch\?v=([a-zA-Z0-9_-]+))\)/i;
-    
-    const imageMatches = Array.from(text.matchAll(imageRegex));
-    const videoMatch = text.match(videoRegex);
-
-    // Build a cleanedText without raw image paths
-    let cleanedText = text;
-    for (const match of imageMatches) {
-      if (match[0]) {
-        cleanedText = cleanedText.replace(match[0], '');
-      }
-    }
-
-    // If we displayed floatingText, also reflect the cleanedText to avoid path showing
-    if (cleanedText !== text) {
-      currentAiResponseRef.current = cleanedText;
-      setFloatingText(prev => prev.replace(text, cleanedText));
-    }
-
-    // If there is a video, prefer showing it
-    if (videoMatch && videoMatch[2]) {
-      const ytId = videoMatch[2];
-      console.debug('[media] parsed YouTube id=', ytId);
-      handleCloseMedia();
-      setMediaInfo({ type: 'video', url: `https://www.youtube.com/embed/${ytId}` });
-      mediaTimeoutRef.current = setTimeout(() => setMediaInfo(null), MEDIA_OVERLAY_DURATION_MS);
-      return;
-    }
-
-    // For each image, sequentially display and narrate
-    if (imageMatches.length > 0) {
-      const baseUrl = (import.meta as any).env?.VITE_BACKEND_URL || window.location.origin;
-      const imageUrls = imageMatches.map(m => {
-        const rawPath = (m && m[1]) ? m[1] : '';
-        const filename = rawPath.split('\\').pop()?.split('/').pop() || rawPath;
-        return `${baseUrl.replace(/\/$/, '')}/images/${encodeURIComponent(filename)}`;
-      });
-
-      // Build a brief 3-4 minute style narration placeholder per image
-      const perImageNarrations = imageUrls.map((_, idx) => (
-        `Let us closely examine this diagram (${idx + 1}/${imageUrls.length}). Notice the key parts and how they connect. ` +
-        `First, identify the main components; then follow the arrows or labels to see relationships. ` +
-        `Observe proportions and any repeated patterns—they often hint at function. ` +
-        `Imagine explaining the flow to a friend: what enters, what changes, and what leaves.`
-      ));
-
-      // Sequentially show each image with its narration below the image overlay
-      let index = 0;
-      const showNext = () => {
-        if (index >= imageUrls.length) {
-          mediaTimeoutRef.current = setTimeout(() => setMediaInfo(null), MEDIA_OVERLAY_DURATION_MS);
-          return;
-        }
-        const explanation = perImageNarrations[index];
-        setMediaInfo({ type: 'image', url: imageUrls[index], explanation });
-        index++;
-        // Keep image on screen ~10s; user can close earlier. This simulates a multi-minute walkthrough per image.
-        if (mediaTimeoutRef.current) clearTimeout(mediaTimeoutRef.current);
-        mediaTimeoutRef.current = setTimeout(showNext, 10000);
-      };
-
-      handleCloseMedia();
-      showNext();
-    }
-  }, [handleCloseMedia]);
-
-  const startFloatingText = useCallback((fullText: string) => {
+  // Handle text segments with TTS
+  const startTextSegment = useCallback((text: string) => {
+    console.log('[App] Starting text segment:', text.substring(0, 100));
     stopFloatingText();
     setFloatingText('');
     floatingTextIndexRef.current = 0;
-    currentAiResponseRef.current = fullText;
     setIsFloating(true);
 
-    textFloatIntervalRef.current = setInterval(() => {
-      if (floatingTextIndexRef.current < currentAiResponseRef.current.length) {
-        const nextChar = currentAiResponseRef.current[floatingTextIndexRef.current];
-        setFloatingText(prev => prev + nextChar);
-        floatingTextIndexRef.current++;
+    const displayText = sanitizeForDisplay(text);
+
+    // Use TTS if available
+    if (ttsService.isSupported()) {
+      console.log('[App] Using TTS for text segment');
+      try {
+        ttsService.onBoundary((charIndex) => {
+          const safeIndex = Math.max(0, Math.min(charIndex, text.length));
+          floatingTextIndexRef.current = safeIndex;
+          const partial = text.substring(0, safeIndex);
+          setFloatingText(sanitizeForDisplay(partial));
+        });
         
-        const currentDisplayedText = currentAiResponseRef.current.substring(0, floatingTextIndexRef.current);
-        // Only parse when a potential media link might have just completed
-        if (currentDisplayedText.endsWith(')')) { 
-             parseAndDisplayMedia(currentDisplayedText);
-        }
+        ttsService.onEnd(() => {
+          console.log('[App] TTS ended, advancing sequence');
+          stopFloatingText();
+          setFloatingText(displayText);
+          // Advance to next segment when TTS completes
+          advanceManually();
+        });
+        
+        ttsService.speak(text, { rate: 1, pitch: 1 });
+      } catch (error) {
+        console.error('[App] TTS error, falling back to streaming:', error);
+        // Fallback to character streaming
+        startCharacterStreaming(text, displayText);
+      }
+    } else {
+      console.log('[App] TTS not supported, using character streaming');
+      // Fallback to character streaming
+      startCharacterStreaming(text, displayText);
+    }
+  }, [stopFloatingText, sanitizeForDisplay, advanceManually]);
+
+  // Fallback character-by-character streaming
+  const startCharacterStreaming = useCallback((fullText: string, displayText: string) => {
+    console.log('[App] Starting character streaming');
+    floatingTextIndexRef.current = 0;
+    textFloatIntervalRef.current = setInterval(() => {
+      if (floatingTextIndexRef.current < fullText.length) {
+        const nextText = fullText.substring(0, floatingTextIndexRef.current + 1);
+        setFloatingText(sanitizeForDisplay(nextText));
+        floatingTextIndexRef.current++;
       } else {
+        console.log('[App] Character streaming completed, advancing sequence');
         stopFloatingText();
-        // Final media check on the whole text
-        parseAndDisplayMedia(currentAiResponseRef.current);
+        setFloatingText(displayText);
+        // Advance to next segment when streaming completes
+        advanceManually();
       }
     }, READING_SPEED_MS_PER_CHAR);
-  }, [stopFloatingText, parseAndDisplayMedia]);
+  }, [stopFloatingText, sanitizeForDisplay, advanceManually]);
+
+  // Handle segment changes
+  useEffect(() => {
+    if (currentSegment) {
+      console.log('[App] Current segment changed:', currentSegment.type, currentSegment.content?.substring(0, 50));
+      
+      if (currentSegment.type === 'text') {
+        startTextSegment(currentSegment.content);
+      } else if (currentSegment.type === 'image') {
+        // For image segments, use the explanation text for TTS
+        if (currentText) {
+          startTextSegment(currentText);
+        } else {
+          // Fallback if no explanation text
+          setFloatingText('');
+          setIsFloating(false);
+        }
+      } else {
+        // For video segments, clear text
+        setFloatingText('');
+        setIsFloating(false);
+      }
+    }
+  }, [currentSegment, currentText, startTextSegment]);
 
   const handleSubmit = async (query: string) => {
     if (!query.trim() || isLoading) return;
 
+    console.log('[App] Handling submit:', query);
+
     const interruptionContext = interruptedTextRef.current;
-    interruptedTextRef.current = ''; // Clear after use
+    interruptedTextRef.current = '';
 
     stopFloatingText();
+    stopSequence();
     setFloatingText('');
     
     const userMessage: Message = { role: Role.USER, content: query };
@@ -152,9 +168,16 @@ export default function App(): React.ReactElement {
 
     try {
       const aiResponse = await getAiTeacherResponse(query, messages, interruptionContext || undefined);
+      console.log('[App] Received AI response, starting sequence');
+      
       const aiMessage: Message = { role: Role.ASSISTANT, content: aiResponse };
       setMessages(prev => [...prev, aiMessage]);
-      startFloatingText(aiResponse);
+      
+      originalAiResponseRef.current = aiResponse;
+      
+      // Start the media sequence
+      startSequence(aiResponse);
+      
     } catch (error) {
       console.error("Error fetching AI response:", error);
       const errorMessage: Message = { role: Role.ASSISTANT, content: "Oh dear, it seems my circuits are a bit scrambled. Could you try asking again?" };
@@ -166,27 +189,40 @@ export default function App(): React.ReactElement {
   };
 
   const handleInterrupt = () => {
+    console.log('[App] Interrupt requested');
     stopFloatingText();
+    stopSequence();
     interruptedTextRef.current = floatingText;
+    ttsService.stop();
   };
   
-  const handleOmit = () => {
+  const handleEndLesson = () => {
+    console.log('[App] End lesson requested');
     stopFloatingText();
-    setFloatingText(currentAiResponseRef.current);
-    parseAndDisplayMedia(currentAiResponseRef.current);
+    stopSequence();
+    ttsService.stop();
+    setFloatingText('');
+    originalAiResponseRef.current = '';
+    floatingTextIndexRef.current = 0;
+    interruptedTextRef.current = '';
   };
 
   useEffect(() => {
-    return () => { // Cleanup on unmount
+    return () => {
       stopFloatingText();
-      if (mediaTimeoutRef.current) clearTimeout(mediaTimeoutRef.current);
+      stopSequence();
+      ttsService.stop();
     };
-  }, [stopFloatingText]);
+  }, [stopFloatingText, stopSequence]);
 
   return (
     <div className="bg-gray-900 text-white min-h-screen flex flex-col items-center justify-center p-4 font-sans overflow-hidden">
       <div className="relative w-full max-w-4xl h-[80vh] flex flex-col items-center justify-center">
-        <RobotAvatar mediaInfo={mediaInfo} onClose={handleCloseMedia} isSpeaking={isFloating} />
+        <RobotAvatar 
+          mediaInfo={currentMedia} 
+          onClose={handleCloseMedia} 
+          isSpeaking={isFloating || (isSequencePlaying && (currentSegment?.type === 'text' || currentSegment?.type === 'image'))} 
+        />
         <MessageDisplay text={floatingText} />
       </div>
       <InputBar
@@ -194,9 +230,10 @@ export default function App(): React.ReactElement {
         setUserInput={setUserInput}
         onSubmit={handleSubmit}
         isLoading={isLoading}
-        isFloating={isFloating}
+        isFloating={isFloating || isSequencePlaying}
         onInterrupt={handleInterrupt}
-        onOmit={handleOmit}
+        onOmit={handleEndLesson}
+        onEnd={handleEndLesson}
       />
     </div>
   );

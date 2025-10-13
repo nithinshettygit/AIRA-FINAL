@@ -8,6 +8,8 @@ import uuid
 import os
 from fastapi.staticfiles import StaticFiles
 from tempfile import NamedTemporaryFile
+import subprocess
+import shutil
 
 # Optional local transcription deps
 LOCAL_WHISPER = os.environ.get("LOCAL_WHISPER", "0") == "1"
@@ -22,6 +24,14 @@ try:
     from openai import OpenAI  # type: ignore
 except Exception:
     OpenAI = None  # Fallback if not installed
+
+# Optional SpeechRecognition + pydub fallback
+try:
+    import speech_recognition as sr  # type: ignore
+    from pydub import AudioSegment  # type: ignore
+except Exception:
+    sr = None  # type: ignore
+    AudioSegment = None  # type: ignore
 
 app = FastAPI(
     title="AI Science Teacher",
@@ -131,24 +141,119 @@ async def transcribe_audio(file: UploadFile = File(...)):
                 text = " ".join([s.text.strip() for s in segments if s.text])
                 return {"text": text.strip()}
 
-            # Otherwise fall back to OpenAI Whisper API
+            # Otherwise try OpenAI Whisper API if key present
             api_key = os.environ.get("OPENAI_API_KEY")
-            if not api_key:
-                raise HTTPException(status_code=400, detail="OPENAI_API_KEY is not set on server")
-            if OpenAI is None:
-                raise HTTPException(status_code=500, detail="openai package not available on server")
-            client = OpenAI(api_key=api_key)
-            model_name = os.environ.get("OPENAI_TRANSCRIBE_MODEL", "whisper-1")
-            with open(tmp_path, "rb") as audio_f:
-                result = client.audio.transcriptions.create(  # type: ignore[attr-defined]
-                    model=model_name,
-                    file=audio_f,
-                    response_format="json",
-                    temperature=0
-                )
-            text = getattr(result, "text", None) or (result.get("text") if isinstance(result, dict) else None)
-            if not text:
-                raise HTTPException(status_code=502, detail="Transcription service returned no text")
+            if api_key and OpenAI is not None:
+                client = OpenAI(api_key=api_key)
+                model_name = os.environ.get("OPENAI_TRANSCRIBE_MODEL", "whisper-1")
+                with open(tmp_path, "rb") as audio_f:
+                    result = client.audio.transcriptions.create(  # type: ignore[attr-defined]
+                        model=model_name,
+                        file=audio_f,
+                        response_format="json",
+                        temperature=0
+                    )
+                text = getattr(result, "text", None) or (result.get("text") if isinstance(result, dict) else None)
+                if not text:
+                    raise HTTPException(status_code=502, detail="Transcription service returned no text")
+                return {"text": text}
+
+            # Finally, use SpeechRecognition (Google Web Speech, no key) as a simple fallback
+            if sr is None or AudioSegment is None:
+                raise HTTPException(status_code=500, detail="SpeechRecognition/pydub not available on server")
+
+            # Convert to WAV with pydub (requires ffmpeg installed on system PATH)
+            wav_tmp = tmp_path + ".wav"
+            try:
+                audio_seg = AudioSegment.from_file(tmp_path)
+                audio_seg = audio_seg.set_channels(1).set_frame_rate(16000)
+                # Normalize loudness to improve ASR (target ~ -20 dBFS)
+                try:
+                    target_dbfs = -20.0
+                    if audio_seg.dBFS != float("-inf"):
+                        gain = target_dbfs - float(audio_seg.dBFS)
+                        audio_seg = audio_seg.apply_gain(gain)
+                        print(f"[SR] Loudness normalization applied: dBFS_before={float(audio_seg.dBFS)-gain:.1f} gain={gain:.1f}dB")
+                except Exception:
+                    pass
+                audio_seg.export(wav_tmp, format="wav")
+                try:
+                    print(f"[SR] Converted to wav: duration_ms={len(audio_seg)}")
+                except Exception:
+                    pass
+            except Exception as conv_exc:
+                raise HTTPException(status_code=500, detail=f"Audio conversion failed (ffmpeg required): {conv_exc}")
+
+            # If the audio is extremely quiet even after normalization, try ffmpeg CLI with strong normalization
+            try:
+                need_ffmpeg_boost = False
+                try:
+                    if audio_seg.dBFS == float("-inf") or float(audio_seg.dBFS) < -50:
+                        need_ffmpeg_boost = True
+                except Exception:
+                    pass
+                if need_ffmpeg_boost and shutil.which("ffmpeg"):
+                    boosted_wav = tmp_path + ".boost.wav"
+                    cmd = [
+                        "ffmpeg", "-y", "-i", tmp_path,
+                        "-ac", "1", "-ar", "16000",
+                        "-af", "loudnorm=I=-18:TP=-1.5:LRA=11",
+                        boosted_wav
+                    ]
+                    try:
+                        subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                        wav_tmp = boosted_wav
+                        print("[SR] Applied ffmpeg loudnorm boost via CLI")
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+
+            rec = sr.Recognizer()
+            lang = os.environ.get("GOOGLE_SPEECH_LANG", "en-US")
+            with sr.AudioFile(wav_tmp) as source:
+                # Match sample: 1s ambient calibration
+                rec.adjust_for_ambient_noise(source, duration=1.0)
+                # Make detection a bit more permissive
+                rec.pause_threshold = 0.6
+                rec.dynamic_energy_threshold = True
+                # Record the whole clip (frontend already limits length)
+                audio_data = rec.record(source)
+            try:
+                # First attempt with configured language, request alternatives
+                result = rec.recognize_google(audio_data, language=lang, show_all=True)  # type: ignore[call-arg]
+                text = ""
+                if isinstance(result, dict):
+                    alts = result.get("alternative") or []
+                    if isinstance(alts, list) and len(alts) > 0:
+                        best = alts[0]
+                        text = best.get("transcript", "")
+                elif isinstance(result, str):
+                    text = result
+                if not text:
+                    raise sr.UnknownValueError  # type: ignore[attr-defined]
+            except sr.UnknownValueError:  # type: ignore[attr-defined]
+                print("[SR] Google recognizer could not understand audio with lang=", lang)
+                # Retry with common English variants
+                text = ""
+                for fallback_lang in ["en-IN", "en-US", "en-GB"]:
+                    if fallback_lang == lang:
+                        continue
+                    try:
+                        text_try = rec.recognize_google(audio_data, language=fallback_lang)
+                        if text_try:
+                            print(f"[SR] Fallback language succeeded: {fallback_lang}")
+                            text = text_try
+                            break
+                    except Exception:
+                        continue
+            except sr.RequestError as e:  # type: ignore[attr-defined]
+                raise HTTPException(status_code=502, detail=f"Google SR request error: {e}")
+            finally:
+                try:
+                    os.remove(wav_tmp)
+                except Exception:
+                    pass
             return {"text": text}
         finally:
             try:

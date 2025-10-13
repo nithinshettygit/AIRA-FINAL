@@ -1,5 +1,4 @@
-
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import type { MediaInfo } from '../types';
 
 interface RobotAvatarProps {
@@ -9,12 +8,31 @@ interface RobotAvatarProps {
 }
 
 const MediaOverlay: React.FC<{ mediaInfo: MediaInfo; onClose: () => void }> = ({ mediaInfo, onClose }) => {
+  const [showVideoControls, setShowVideoControls] = useState(false);
+  const iframeRef = useRef<HTMLIFrameElement>(null);
+
+  // Send play command to YouTube iframe when it loads
+  useEffect(() => {
+    if (mediaInfo.type === 'video' && iframeRef.current) {
+      const iframe = iframeRef.current;
+      const onLoad = () => {
+        console.log('[MediaOverlay] YouTube iframe loaded');
+        // YouTube iframe API commands can be sent here if needed
+      };
+      
+      iframe.addEventListener('load', onLoad);
+      return () => iframe.removeEventListener('load', onLoad);
+    }
+  }, [mediaInfo]);
+
   return (
     <div 
       className="absolute inset-0 z-20 bg-black bg-opacity-70 flex items-center justify-center p-4 transition-opacity duration-500"
       role="dialog"
       aria-modal="true"
       aria-labelledby="media-title"
+      onMouseEnter={() => mediaInfo.type === 'video' && setShowVideoControls(true)}
+      onMouseLeave={() => mediaInfo.type === 'video' && setShowVideoControls(false)}
     >
       <div className="relative w-full h-full max-w-3xl max-h-[80%] rounded-lg overflow-hidden shadow-2xl">
         <h2 id="media-title" className="sr-only">
@@ -42,30 +60,60 @@ const MediaOverlay: React.FC<{ mediaInfo: MediaInfo; onClose: () => void }> = ({
           </div>
         )}
         {mediaInfo.type === 'video' && (
-          <iframe
-            width="100%"
-            height="100%"
-            src={mediaInfo.url}
-            title="Educational Video"
-            frameBorder="0"
-            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-            allowFullScreen
-          ></iframe>
+          <div className="relative w-full h-full">
+            <iframe
+              ref={iframeRef}
+              width="100%"
+              height="100%"
+              src={mediaInfo.url}
+              title="Educational Video"
+              frameBorder="0"
+              allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+              allowFullScreen
+              onLoad={() => console.log('[media] YouTube iframe loaded')}
+            ></iframe>
+            
+            {/* Video controls - show on hover */}
+            {showVideoControls && (
+              <div className="absolute top-4 right-4 flex gap-2">
+                <button
+                  onClick={onClose}
+                  className="bg-red-600 text-white rounded-full p-3 hover:bg-red-500 transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-gray-800 focus:ring-white shadow-lg"
+                  aria-label="Close video and continue lesson"
+                  title="Close video and continue"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
+            )}
+
+            {/* Video hint message */}
+            <div className="absolute bottom-4 left-4 bg-black bg-opacity-50 text-white px-3 py-2 rounded text-sm">
+              Video will auto-close when finished, or click X to close early
+            </div>
+          </div>
         )}
-        <button
-          onClick={onClose}
-          className="absolute top-2 right-2 z-30 bg-gray-800 text-white rounded-full p-2 hover:bg-gray-600 transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-gray-800 focus:ring-white"
-          aria-label="Close media view"
-        >
-          <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-          </svg>
-        </button>
+        
+        {/* Close button for images (always visible) */}
+        {mediaInfo.type === 'image' && (
+          <button
+            onClick={onClose}
+            className="absolute top-2 right-2 z-30 bg-gray-800 text-white rounded-full p-2 hover:bg-gray-600 transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-gray-800 focus:ring-white"
+            aria-label="Close image view"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        )}
       </div>
     </div>
   );
 };
 
+// ... (keep the existing AnimatedRobot component exactly the same)
 
 const AnimatedRobot: React.FC<{isSpeaking: boolean}> = ({ isSpeaking }) => {
     const [isBlinking, setIsBlinking] = useState(false);
@@ -77,7 +125,7 @@ const AnimatedRobot: React.FC<{isSpeaking: boolean}> = ({ isSpeaking }) => {
         const blinkInterval = setInterval(() => {
         setIsBlinking(true);
         setTimeout(() => setIsBlinking(false), 150);
-        }, 4000); // Blink every 4 seconds
+        }, 4000);
         return () => clearInterval(blinkInterval);
     }, []);
 
@@ -88,7 +136,7 @@ const AnimatedRobot: React.FC<{isSpeaking: boolean}> = ({ isSpeaking }) => {
         syncInterval = setInterval(() => {
             const nextShape = mouthShapes[Math.floor(Math.random() * mouthShapes.length)];
             setMouthShape(nextShape);
-        }, 150); // Change shape every 150ms
+        }, 150);
         } else {
         setMouthShape('smile');
         }

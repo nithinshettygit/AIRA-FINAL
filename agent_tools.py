@@ -96,6 +96,46 @@ def fetch_images_for_topic(query):
     return fetch_figures_only(subchapter)
 
 
+def is_topic_in_syllabus(topic: str) -> bool:
+    """
+    Check if a topic is within the syllabus by searching the knowledge base.
+    Returns True if topic is in syllabus, False otherwise.
+    """
+    print(f"[DEBUG] Checking if topic is in syllabus: {topic}")
+    
+    # Use the search function to check if topic exists in knowledge base
+    results = search(topic, mode="hybrid", top_k=1)
+    
+    if not results:
+        print(f"[DEBUG] Topic '{topic}' not found in syllabus")
+        return False
+    
+    # Check if the result is the default "not found" response
+    content = results[0]['content']
+    if "Sorry, I couldn't find information for that topic" in content:
+        print(f"[DEBUG] Topic '{topic}' not in syllabus (default response)")
+        return False
+    
+    print(f"[DEBUG] Topic '{topic}' found in syllabus")
+    return True
+
+
+def determine_topic_type(topic: str) -> str:
+    """
+    Determine if topic is in syllabus, out of syllabus, or casual chat
+    """
+    # Simple heuristic for casual chat
+    casual_indicators = ["hello", "hi", "how are you", "good morning", "good afternoon", "thanks", "thank you"]
+    if any(indicator in topic.lower() for indicator in casual_indicators):
+        return "casual"
+    
+    # Check if in syllabus
+    if is_topic_in_syllabus(topic):
+        return "in_syllabus"
+    else:
+        return "out_syllabus"
+
+
 # === Tools ===
 
 @tool
@@ -127,7 +167,7 @@ def image_tool(topic: str) -> str:
 
 
 def fetch_animated_videos(topic, num_videos=1):
-    search_query = f"ytsearch{num_videos}:{topic} animation explained in english"
+    search_query = f"ytsearch{num_videos}:{topic} brief explaination "
     ydl_opts = {
         "quiet": True,
         "extract_flat": True,
@@ -166,6 +206,3 @@ def video_tool(topic: str) -> str:
     
     print(f"[DEBUG] video_tool output:\n{output}\n")
     return output
-
-
-
