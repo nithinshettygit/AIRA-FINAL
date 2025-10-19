@@ -1,0 +1,67 @@
+/* Custom Animations for HomePage */
+
+/* Particle Float */
+@keyframes float-standard {
+    0%, 100% { 
+        transform: translateY(0px) rotate(0deg); 
+        opacity: 0.2;
+    }
+    50% { 
+        transform: translateY(-25px) rotate(180deg); 
+        opacity: 0.3;
+    }
+}
+
+/* AIRA Text Glow */
+@keyframes glow-standard {
+    0%, 100% { 
+        filter: drop-shadow(0 0 5px rgba(34, 211, 238, 0.4)); /* Cyan */
+    }
+    50% { 
+        filter: drop-shadow(0 0 15px rgba(34, 211, 238, 0.7)); 
+    }
+}
+
+/* Subtitle Separator Expand */
+@keyframes expand-standard {
+    0% { width: 0px; opacity: 0; }
+    100% { width: 96px; opacity: 1; }
+}
+
+/* Slow Pulse for Orbs */
+@keyframes pulse-slow-orb {
+    0%, 100% { opacity: 0.15; transform: scale(1); }
+    50% { opacity: 0.3; transform: scale(1.05); }
+}
+
+/* Standard Pulse for AIRA Halo */
+@keyframes pulse-standard {
+    0%, 100% { opacity: 0.3; }
+    50% { opacity: 0.5; }
+}
+
+/* Tailwind Classes Assignment (Used in the component) */
+.animate-float-standard {
+    animation: float-standard 15s ease-in-out infinite;
+}
+.animate-glow-standard {
+    animation: glow-standard 3s ease-in-out infinite;
+}
+.animate-expand-standard {
+    animation: expand-standard 1.5s ease-out forwards;
+    animation-delay: 0.5s;
+}
+.animate-pulse-slow-orb {
+    animation: pulse-slow-orb 8s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+.animate-pulse-standard {
+    animation: pulse-standard 3s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+/* Custom Delay Utility Classes (Used for the background orbs) */
+.custom-delay-2s {
+    animation-delay: 2s !important;
+}
+.custom-delay-4s {
+    animation-delay: 4s !important;
+}

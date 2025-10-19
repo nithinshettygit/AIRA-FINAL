@@ -9,4 +9,4 @@ export const MEDIA_OVERLAY_DURATION_MS: number = 10000; // 10 seconds for images
 
 // Media sequence timing
 export const IMAGE_DISPLAY_DURATION_MS: number = 10000; // 10 seconds per image
-export const VIDEO_DISPLAY_DURATION_MS: number = 30000; // 30 seconds for video
+export const VIDEO_DISPLAY_DURATION_MS: number = 60000; // 30 seconds for video

@@ -1,4 +1,3 @@
-
 import React from 'react';
 
 interface MessageDisplayProps {
@@ -13,20 +12,17 @@ export const MessageDisplay: React.FC<MessageDisplayProps> = ({ text }) => {
     return null;
   }
 
-  // Process the text to only show the last N words for a subtitle effect.
+  // Show the last N words for a subtitle-like effect while keeping full centering
   const words = text.trim().split(/\s+/);
-  const displayedText = words.slice(-MAX_WORDS_SUBTITLE).join(' ');
+  const displayedText =
+    words.length > MAX_WORDS_SUBTITLE ? words.slice(-MAX_WORDS_SUBTITLE).join(' ') : words.join(' ');
 
   return (
-    <div 
-      className="absolute bottom-16 w-full px-4 md:px-8 z-10 pointer-events-none"
-      aria-live="polite"
-      aria-atomic="true"
-    >
-      <div className="max-w-4xl mx-auto">
-        <p 
-          className="text-center text-xl md:text-2xl lg:text-3xl font-semibold leading-tight text-white transition-all duration-150"
-          style={{ textShadow: '2px 2px 4px rgba(0, 0, 0, 0.8)' }}
+    <div className="w-full flex items-center justify-center">
+      <div className="bg-black bg-opacity-60 rounded-2xl px-6 py-4 max-w-2xl mx-auto">
+        <p
+          className="text-xl md:text-2xl lg:text-3xl font-semibold leading-tight text-white text-center"
+          style={{ textShadow: '2px 2px 8px rgba(0, 0, 0, 0.9)' }}
         >
           {displayedText}
         </p>

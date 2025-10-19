@@ -10,18 +10,12 @@ if (!rootElement) {
   throw new Error("Could not find root element to mount to");
 }
 
-// Debug: Check if components are loading
-console.log('HomePage component:', HomePage);
-console.log('LessonIndex component:', LessonIndex);
-console.log('ChatInterface component:', ChatInterface);
+console.log('Starting AIRA application...');
 
 const root = ReactDOM.createRoot(rootElement);
 root.render(
   <React.StrictMode>
     <Router>
-      <div style={{ background: 'red', padding: '10px', color: 'white' }}>
-        DEBUG: Router is mounted
-      </div>
       <Routes>
         <Route path="/" element={<HomePage />} />
         <Route path="/ask" element={<ChatInterface />} />

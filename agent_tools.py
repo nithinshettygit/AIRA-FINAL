@@ -167,7 +167,7 @@ def image_tool(topic: str) -> str:
 
 
 def fetch_animated_videos(topic, num_videos=1):
-    search_query = f"ytsearch{num_videos}:{topic} brief explaination "
+    search_query = f"ytsearch{num_videos}:{topic} explaination video for science students "
     ydl_opts = {
         "quiet": True,
         "extract_flat": True,
@@ -178,7 +178,7 @@ def fetch_animated_videos(topic, num_videos=1):
         info = ydl.extract_info(search_query, download=False)
         if "entries" in info and len(info["entries"]) > 0:
             video = info["entries"][0]
-            if video.get("duration", 301) <= 300:  # only pick videos ≤ 5 min
+            if video.get("duration",361 ) <= 360:  # only pick videos ≤ 5 min
                 url = f"https://www.youtube.com/watch?v={video['id']}"
                 return {
                     "title": video["title"],
